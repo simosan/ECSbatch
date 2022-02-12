@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: 'MKECS_SIM-BATCH'
+  TaskDefineName:
+    Type: String
+    Default: 'MKECS_SIM-BATCH-PGIMPORT'
+  RepositoryName:
+    Type: String
+    Default: ''
+  AppName:
+    Type: String 
+    Default: 'simbatch'
+  TaskCpu:
+    Type: Number
+    Default: 256
+  TaskMemory:
+    Type: Number
+    Default: 512
+  EFSFileSystemId:
+    Type: String
+    Default: '' #EFSのファイルシステムIDを指定
+  EFSFileSystemNameBin:
+    Type: String
+    Default: 'sim-batch-efs-bin' 
+  EFSAccesspointBin:
+    Type: String
+    Default: ''
+  EFSFileSystemNameConf:
+    Type: String
+    Default: 'sim-batch-efs-conf'
+  EFSAccesspointConf:
+    Type: String
+    Default: ''
+  EFSFileSystemNameWork:
+    Type: String
+    Default: 'sim-batch-efs-work'
+  EFSAccesspointWork:
+    Type: String
+    Default: ''
+
+Resources:
+# -------------------------------------
+# Fargate タスク定義（Atheneで集計したCSVファイルをPostgresにバルクインポート）
+# -------------------------------------
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref TaskDefineName
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !Sub ${ClusterName}-ecsTaskExecutionRole
+      TaskRoleArn: !Sub ${ClusterName}-task-role
+      Volumes:
+        - Name: !Ref EFSFileSystemNameBin
+          EFSVolumeConfiguration:
+            authorizationConfig:
+              accessPointId: !Ref EFSAccesspointBin
+            FilesystemId: !Ref EFSFileSystemId
+            TransitEncryption: 'ENABLED'
+        - Name: !Ref EFSFileSystemNameConf
+          EFSVolumeConfiguration:
+            authorizationConfig:
+              accessPointId: !Ref EFSAccesspointConf
+            FilesystemId: !Ref EFSFileSystemId
+            TransitEncryption: 'ENABLED'
+        - Name: !Ref EFSFileSystemNameWork
+          EFSVolumeConfiguration:
+            authorizationConfig:
+              accessPointId: !Ref EFSAccesspointWork
+            FilesystemId: !Ref EFSFileSystemId
+            TransitEncryption: 'ENABLED'
+      ContainerDefinitions:
+        - Name: !Ref AppName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryName}
+          Command:
+            - '/bin/bash'
+            - '/root/bin/importLogonLogoffToPg.sh'
+            - '/root/conf/pgsql.txt'
+            - 'hostname or ipAddress'
+          Environment:
+            - Name: TZ
+              Value: Asia/Tokyo
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-group: !Sub /ecs/${ClusterName}
+              awslogs-create-group: true
+              awslogs-stream-prefix: !Ref AppName
+          Essential: true
+          MountPoints:
+            - SourceVolume: !Ref EFSFileSystemNameBin   # VolumesプロパティのNameと合わせる必要あり
+              ContainerPath: /root/bin
+              ReadOnly: true 
+            - SourceVolume: !Ref EFSFileSystemNameConf  # VolumesプロパティのNameと合わせる必要あり
+              ContainerPath: /root/conf
+              ReadOnly: true
+            - SourceVolume: !Ref EFSFileSystemNameWork  # VolumesプロパティのNameと合わせる必要あり
+              ContainerPath: /root/work
+              ReadOnly: false 

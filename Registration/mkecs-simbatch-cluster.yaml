@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: 'MKECS_SIM-BATCH'
+  VpcId:
+    Type: String
+    Default: ''
+  OutboundIpRange:
+    Type: String
+    Default: '0.0.0.0/0'
+  InboundIpRange:
+    Type: String
+    Default: '0.0.0.0/0'
+
+Resources:
+# -------------------------------------
+# Fargateですべての通信を許可するセキュリティグループ
+# -------------------------------------
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+      GroupName: !Ref ProjectName
+      GroupDescription: Security group for the simbatch-service
+      VpcId: !Ref VpcId
+
+  SecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: -1                     #すべてのプロトコルを許可
+      CidrIp: !Ref InboundIpRange
+
+  SecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: -1                     #すべてのプロトコルを許可
+      CidrIp: !Ref OutboundIpRange
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ProjectName
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${ProjectName}
+
+# -------------------------------------
+# タスク起動時に必要なロールを定義
+# -------------------------------------
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-EcsTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - secretsmanager:GetSecretValue
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - "*"
+      RoleName: !Sub ${ProjectName}-ecsTaskExecutionRole
+
+# -------------------------------------
+# アプリケーションに必要なロールを定義
+# -------------------------------------
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceEventsRole
+      RoleName: !Sub ${ProjectName}-task-role
+
+  EcsTaskRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${ProjectName}-task-role-policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:List*
+              - s3:Get*
+              - s3:Put*
+            Resource:
+              - '*'
+      Roles:
+        - Ref: EcsTaskRole
+
+# -------------------------------------
+# 別テンプレートで本スタックのパラメータ（ARNなど）を参照できるようにエクスポート
+# -------------------------------------
+Outputs:
+  SimExpSecurityGroup1:
+    Value: !Ref SecurityGroup
+    Export:
+      Name: SimbatchSecurityGroup 
